@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Diplomatic Pouch</title>
+<style>
+:root{--bg:#f6f5f1;--sf:#fff;--tx:#1d1d1b;--mu:#6b6a64;--bd:#d9d6cc;--ac:#2f6b4f;--ac2:#fff;--wr:#b3261e;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#161715;--sf:#222320;--tx:#ecebe5;--mu:#a09f96;--bd:#3a3b36;--ac:#6fc299;--ac2:#10120f;--wr:#ff8a80;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:12px;max-width:900px;margin-inline:auto}
+h1{font-size:20px;margin:4px 0 2px}h2{font-size:16px;margin:0 0 10px}
+.sub{color:var(--mu);margin:0 0 12px;font-size:13px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:520px){.g{grid-template-columns:1fr}}
+label{display:block;font-size:12px;color:var(--mu);margin-bottom:3px}
+input,select{width:100%;padding:9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font:inherit}
+.full{grid-column:1/-1}
+button{padding:9px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--sf);color:var(--tx);font:inherit;cursor:pointer}
+button.p{background:var(--ac);color:var(--ac2);border-color:var(--ac);font-weight:600}
+button.d{color:var(--wr)}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;border:1px solid var(--bd);font-size:12px}
+.lv{font-weight:700;color:var(--ac)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:820px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--mu);font-weight:600}
+td select{padding:4px;font-size:12px;min-width:120px}
+.hint{font-size:12px;color:var(--mu)}
+</style></head><body>
+<h1>The Diplomatic Pouch</h1>
+<p class="sub">Last Asylum · NAP violations, offense counters and graduated warning messages. Data is stored in the alliance Google Sheet.</p>
+<div class="row" style="margin:0 0 12px"><span class="hint" id="ss">Starting…</span><button id="refresh">Refresh</button><button id="kb">Access key</button></div>
+
+<div class="card"><h2>My info</h2><div class="g">
+<div><label>My alliance tag</label><input id="me_a" placeholder="e.g. [ABC]"></div>
+<div><label>My name (signature and “logged by”)</label><input id="me_p"></div></div>
+<p class="hint">Saved on this device only, so each R4 signs with their own name.</p></div>
+
+<div class="card"><h2>New incident</h2><div class="g">
+<div><label>Offending player</label><input id="j" autocomplete="off"></div>
+<div><label>Offender’s alliance</label><input id="a" autocomplete="off"></div>
+<div><label>Attacked player</label><input id="v"></div>
+<div><label>Date and time</label><input id="d" type="datetime-local"></div>
+<div class="full"><label>Violation</label><select id="n"></select></div>
+<div><label>Their diplomat (to address)</label><input id="dp"></div>
+<div><label>Response sent</label><select id="r"></select></div>
+<div><label>Status</label><select id="st"></select></div>
+<div><label>Notes</label><input id="no"></div></div>
+<p class="hint" id="cnt"></p>
+<div class="row"><button class="p" id="add">Save incident</button><button id="prev">Preview message</button></div></div>
+
+<div class="card" id="msgc" hidden><h2>Message <span class="badge">level <span class="lv" id="lvl"></span>/5</span></h2>
+<div class="g"><div><label>Level</label><select id="lvsel"><option value="0">Automatic</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+<div><label>Character limit per message in the game</label><input id="lim" type="number" min="50" value="200"></div></div>
+<p class="hint">Send the blocks one after another, in order.</p><div id="blocks"></div></div>
+
+<div class="card"><h2>History</h2>
+<div class="row" style="margin:0 0 10px"><input id="q" placeholder="Search player, alliance, violation…" style="flex:1;min-width:180px"></div>
+<div class="tw"><table><thead><tr><th>Date</th><th>Offender</th><th>Alliance</th><th>Violation</th><th>Victim</th><th>Count P / A</th><th>Response</th><th>Status</th><th>By</th><th></th></tr></thead><tbody id="tb"></tbody></table></div>
+<p class="hint" id="emp"></p></div>
+
+<script>
+/* ===== ONE-TIME SETUP: paste the Apps Script web app URL between the quotes ===== */
+const API_URL="https://script.google.com/macros/s/AKfycbzIw6F-pmc3Ing0JowIDTtpOL_uD9dcEMP2oFeZdUtfVoJBBTkWHPILrtezbBbwzg1qFw/exec";
+/* ================================================================================ */
+const $=i=>document.getElementById(i);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const key=s=>String(s||"").trim().toLowerCase();
+let KEY="",S={},R=[],V=[],REP=[],ST=[],TPL=[],cur=null;
+try{KEY=localStorage.getItem("pouch_key")||"";S=JSON.parse(localStorage.getItem("pouch_s")||"{}")}catch(e){}
+function saveS(){try{localStorage.setItem("pouch_s",JSON.stringify(S))}catch(e){}}
+function status(t,err){$("ss").textContent=t;$("ss").style.color=err?"var(--wr)":"var(--mu)"}
+function nowLocal(){const t=new Date();t.setMinutes(t.getMinutes()-t.getTimezoneOffset());return t.toISOString().slice(0,16)}
+$("d").value=nowLocal();$("me_a").value=S.a||"";$("me_p").value=S.p||"";$("lim").value=S.lim||200;
+["me_a","me_p"].forEach(i=>$(i).oninput=()=>{S[i==="me_a"?"a":"p"]=$(i).value;saveS()});
+$("lim").oninput=()=>{S.lim=$("lim").value;saveS();redo()};
+
+async function load(){
+  if(API_URL.startsWith("PASTE")){status("Not configured: the page owner must set API_URL.",true);return}
+  if(!KEY){askKey();return}
+  status("Loading…");
+  try{
+    const r=await fetch(API_URL+"?key="+encodeURIComponent(KEY),{redirect:"follow"});const j=await r.json();
+    if(!j.ok){if(j.error==="bad_key"){status("Wrong access key. Tap “Access key”.",true);return}throw new Error(j.error)}
+    R=j.rows;V=j.viol;REP=j.rep;ST=j.st;TPL=j.tpl;fill();render();upd();status("Synced "+new Date().toLocaleTimeString());
+  }catch(e){status("Could not load: "+(e.message||e),true)}}
+async function api(body){
+  const r=await fetch(API_URL,{method:"POST",redirect:"follow",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({key:KEY,...body})});
+  const j=await r.json();if(!j.ok)throw new Error(j.error||"error");return j}
+function askKey(){const k=prompt("Enter the alliance access key");if(k!==null){KEY=k.trim();try{localStorage.setItem("pouch_key",KEY)}catch(e){}load()}}
+$("kb").onclick=askKey;$("refresh").onclick=load;
+
+function fill(){
+  const gs=[...new Set(V.map(x=>x[4]))];
+  $("n").innerHTML=gs.map(g=>`<optgroup label="${esc(g)}">`+V.map((x,i)=>x[4]===g?`<option value="${i}">${esc(x[0])}</option>`:"").join("")+"</optgroup>").join("");
+  $("r").innerHTML=REP.map(x=>`<option>${esc(x)}</option>`).join("");
+  $("st").innerHTML=ST.map(x=>`<option>${esc(x)}</option>`).join("")}
+function ranks(){const pj={},pa={},o={};[...R].sort((x,y)=>x.row-y.row).forEach(e=>{const a=key(e.j),b=key(e.a);pj[a]=(pj[a]||0)+1;pa[b]=(pa[b]||0)+1;o[e.row]=[pj[a],pa[b]]});return o}
+function totals(j,a){return[R.filter(e=>key(e.j)===key(j)).length,R.filter(e=>key(e.a)===key(a)).length]}
+function ord(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0])}
+function level(sev,nj,na){return Math.min(5,Math.max(1,sev+Math.min(nj-1,2)+(na>=3?1:0)))}
+function split(t,L){if(t.length<=L)return[t];const out=[];let c="";for(const x of(t.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g)||[t])){if(c&&(c+x).trim().length>L){out.push(c.trim());c=x}else c+=x}if(c.trim())out.push(c.trim());return out}
+function build(e,nj,na,force){
+  const N=V.find(x=>x[0]===e.viol)||V[V.length-1];if(!N||!TPL.length)return;
+  const lv=force||level(Number(N[1])||2,nj,na);$("lvl").textContent=lv;
+  const m=/^(\d{4})-(\d\d)-(\d\d)/.exec(e.date||"");
+  const dt=m?new Date(+m[1],+m[2]-1,+m[3]).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):"";
+  const me=((S.a||"")+(S.p?" "+S.p:"")).trim()||"our alliance";
+  const p={dip:e.dip||"diplomat",a:e.a||"your alliance",j:e.j||"?",v:e.v||"?",what:N[2],date:dt,when:e.v?e.v+", "+dt:dt,me,nj:ord(nj),na:ord(na),sa:N[3]};
+  const L=parseInt($("lim").value)||200;
+  const bl=TPL[lv-1].filter(Boolean).flatMap(t=>split(String(t).replace(/\{(\w+)\}/g,(x,k)=>p[k]).replace(/\s+([.,])/g,"$1").trim(),L));
+  window._bl=bl;
+  $("blocks").innerHTML=bl.map((b,i)=>`<div class="card" style="margin:8px 0;padding:10px"><div class="hint">Block ${i+1}/${bl.length} · <span${b.length>L?' style="color:var(--wr)"':""}>${b.length}/${L} characters</span></div><div style="white-space:pre-wrap;margin:6px 0">${esc(b)}</div><button class="p" data-c="${i}">Copy</button></div>`).join("");
+  $("msgc").hidden=false}
+function redo(){if(cur)build(cur.e,cur.nj,cur.na,+$("lvsel").value||0)}
+$("lvsel").onchange=redo;
+$("blocks").onclick=async ev=>{const b=ev.target.closest("button");if(!b)return;const t=window._bl[+b.dataset.c];
+  try{await navigator.clipboard.writeText(t)}catch(e){const a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();document.execCommand("copy");a.remove()}
+  b.textContent="Copied ✓";setTimeout(()=>b.textContent="Copy",1200)};
+function form(){return{j:$("j").value.trim(),a:$("a").value.trim(),v:$("v").value.trim(),date:$("d").value,viol:(V[+$("n").value]||[])[0]||"",dip:$("dp").value.trim(),resp:$("r").value,status:$("st").value,notes:$("no").value,by:S.p||""}}
+function upd(){const f=form(),[tj,ta]=totals(f.j,f.a);$("cnt").textContent=f.j?`This will be offense #${tj+1} for ${f.j} and #${ta+1} for ${f.a||"their alliance"}.`:""}
+["j","a"].forEach(i=>$(i).oninput=upd);
+$("prev").onclick=()=>{const f=form(),[tj,ta]=totals(f.j,f.a);cur={e:f,nj:tj+1,na:ta+1};redo()};
+$("add").onclick=async()=>{const f=form();if(!f.j){alert("Enter the offending player’s name.");return}
+  $("add").disabled=true;status("Saving…");
+  try{const j=await api({action:"add",...f});await load();const e=R.find(x=>x.row===j.row);
+    if(e){const o=ranks()[e.row];cur={e,nj:o[0],na:o[1]};redo()}
+    ["j","a","v","dp","no"].forEach(i=>$(i).value="");$("d").value=nowLocal();upd();status("Saved ✓ "+new Date().toLocaleTimeString())}
+  catch(e){status("Save failed: "+(e.message||e),true)}
+  $("add").disabled=false};
+function render(){const o=ranks(),q=key($("q").value);
+  const sel=(arr,val,f,row)=>`<select data-f="${f}" data-row="${row}">${arr.map(x=>`<option${x===val?" selected":""}>${esc(x)}</option>`).join("")}</select>`;
+  const rows=[...R].sort((x,y)=>String(y.date).localeCompare(String(x.date))).filter(e=>!q||key([e.j,e.a,e.v,e.viol,e.resp,e.status,e.notes].join(" ")).includes(q));
+  $("tb").innerHTML=rows.map(e=>`<tr><td>${esc(String(e.date).replace("T"," "))}</td><td>${esc(e.j)}</td><td>${esc(e.a)}</td><td>${esc(e.viol)}</td><td>${esc(e.v)}</td><td>${o[e.row][0]} / ${o[e.row][1]}</td><td>${sel(REP,e.resp,"resp",e.row)}</td><td>${sel(ST,e.status,"status",e.row)}</td><td>${esc(e.by)}</td><td style="white-space:nowrap"><button data-m="${e.row}">Message</button> <button class="d" data-x="${e.row}">✕</button></td></tr>`).join("");
+  $("emp").textContent=R.length?"":"No incidents recorded yet."}
+$("q").oninput=render;
+$("tb").onclick=async ev=>{const b=ev.target.closest("button");if(!b)return;
+  if(b.dataset.m){const e=R.find(x=>x.row==b.dataset.m),r=ranks()[e.row];cur={e,nj:r[0],na:r[1]};redo();$("msgc").scrollIntoView({behavior:"smooth"})}
+  if(b.dataset.x&&confirm("Delete this incident?")){try{await api({action:"delete",row:+b.dataset.x});await load()}catch(e){status("Delete failed: "+(e.message||e),true)}}};
+$("tb").onchange=async ev=>{const s=ev.target;if(!s.dataset||!s.dataset.f)return;
+  try{await api({action:"update",row:+s.dataset.row,[s.dataset.f]:s.value});const e=R.find(x=>x.row==s.dataset.row);if(e)e[s.dataset.f]=s.value;status("Updated ✓")}catch(e){status("Update failed: "+(e.message||e),true)}};
+load();
+</script></body></html>
